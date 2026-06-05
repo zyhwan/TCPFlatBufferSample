@@ -15,6 +15,7 @@ bool UTCPClientSubsystem::Connect(const FString& Host, int32 Port)
 	ISocketSubsystem* SocketSubSystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	//gethostbyname
 	FAddressInfoResult AddrInfo = SocketSubSystem->GetAddressInfo(*Host, nullptr, EAddressInfoFlags::Default, NAME_None);
+	
 	//SOCKADDR 만들기 
 	TSharedRef<FInternetAddr> ServerAddr = AddrInfo.Results[0].Address;
 
@@ -30,6 +31,14 @@ bool UTCPClientSubsystem::Connect(const FString& Host, int32 Port)
 		UE_LOG(LogTemp, Warning, TEXT("Connect Failed."));
 		return false;
 	}
+
+	if (!ServerSocket->Connect(*ServerAddr))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Connect Failed."));
+		return false;
+	}
+
+	ServerSocket->SetNonBlocking(false);
 
 	RecvBuffer.Reset();
 
@@ -78,6 +87,13 @@ void UTCPClientSubsystem::SendLogin(const FString& UserID, const FString& Passwo
 	SendAll(Builder.GetBufferPointer(), Builder.GetSize());
 }
 
+void UTCPClientSubsystem::Deinitialize()
+{
+	Disconnect();
+
+	Super::Deinitialize();
+}
+
 void UTCPClientSubsystem::RecvAll()
 {
 	if (!ServerSocket)
@@ -85,49 +101,55 @@ void UTCPClientSubsystem::RecvAll()
 		return;
 	}
 
-	//1. 2byte 헤더 받기
 	uint32 Pending = 0;
-
-	int32 RecvBytes = 0;
-	uint16 PacketSize = 0;
-	while (ServerSocket->HasPendingData(Pending))
+	if (!ServerSocket->HasPendingData(Pending) || Pending <= 0) //나 다음에 받을거 있어?
 	{
-		if (ServerSocket->Recv((uint8*)&PacketSize, sizeof(PacketSize), RecvBytes) || RecvBytes == 0)
+		//없다면 리턴.
+		return;
+	}
+
+	//전제 - 누가 공격하지 않는다면.
+	//1. 2byte 헤더 받기
+	uint16 NetPacketSize = 0; //BigEndian
+	uint16 PacketSize = 0; //LitteleEndian
+
+	int32 TotalRecvBytes = 0; //총 받은 바이트 수 
+	int32 RecvBytes = 0; //얼마나 받았는지
+
+	//2바이트 받았는지 확인하기.
+	while (TotalRecvBytes < (int32)sizeof(NetPacketSize))
+	{
+		if (!ServerSocket->Recv((uint8*)&NetPacketSize + TotalRecvBytes, sizeof(NetPacketSize) - TotalRecvBytes, RecvBytes)
+			|| RecvBytes == 0)
 		{
 			Disconnect();
 			break;
 		}
-
-		if (RecvBytes == 2)
-		{
-			break;
-		}
+		TotalRecvBytes += RecvBytes;
 	}
 
+	PacketSize = NETWORK_ORDER16(NetPacketSize);
 
+	RecvBuffer.SetNumUninitialized(PacketSize);
+
+	TotalRecvBytes = 0; //총 받은 바이트 수 
+	RecvBytes = 0; //얼마나 받았는지
 
 	//Body
-	while (ServerSocket->HasPendingData(Pending))
+	while (TotalRecvBytes < (int32)(PacketSize))
 	{
-		if (ServerSocket->Recv(RecvBuffer.GetData(), PacketSize, RecvBytes) || RecvBytes == 0)
+		if (!ServerSocket->Recv(RecvBuffer.GetData() + TotalRecvBytes, PacketSize - TotalRecvBytes, RecvBytes)
+			|| RecvBytes == 0)
 		{
 			Disconnect();
 			break;
 		}
-
-		if (RecvBytes == PacketSize)
-		{
-			break;
-		}
+		TotalRecvBytes += RecvBytes;
 	}
 
-	if (RecvBytes > 0)
-	{
-		RecvBuffer.SetNum(RecvBytes);
-		DispatchPacket();
-		RecvBuffer.Reset();
-	}
-
+	//예외 처리 안함. 일단 못받아도 넘긴다.
+	DispatchPacket();
+	RecvBuffer.Reset();
 
 }
 
@@ -135,19 +157,18 @@ bool UTCPClientSubsystem::SendAll(const uint8* Body, uint32 BodyLength)
 {
 	TArray<uint8> Packet;
 	//[][] [][][][][][][]
-	Packet.Reserve(2 + BodyLength);
+	Packet.Reserve(2 + BodyLength); //이전 char buffer[1024] 이런식으로 작업한 내용과 동일.
 	//[][] -> Header
 	FMemory::Memcpy(Packet.GetData(), &BodyLength, 2);
-	//Packet.Add((uint8)((BodyLength >> 8) & 0xFF));
-	//Packet.Add((uint8)((BodyLength) & 0xFF));
-	Packet.SetNum(2);
+	Packet.Add((uint8)((BodyLength >> 8) & 0xFF));
+	Packet.Add((uint8)((BodyLength) & 0xFF));
 	Packet.Append(Body, BodyLength);
 
 	int32 SentTotalBytes = 0;
 	while (SentTotalBytes < Packet.Num())
 	{
 		int32 SentBytes = 0;
-		if (ServerSocket->Send(Packet.GetData() + SentTotalBytes, Packet.Num() - SentTotalBytes, SentBytes) || SentBytes < 0)
+		if (!ServerSocket->Send(Packet.GetData() + SentTotalBytes, Packet.Num() - SentTotalBytes, SentBytes) || SentBytes < 0)
 		{
 			return false;
 		}
@@ -169,7 +190,7 @@ void UTCPClientSubsystem::DispatchPacket()
 		//Delegate로 바꿈
 		const auto* LoginData = UserPacketData->data_as_S2C_Login();
 
-		FString Message = LoginData->message() ? UTF8_TO_TCHAR(LoginData->message()) : FString();
+		FString Message = UTF8_TO_TCHAR(LoginData->message()->c_str());
 
 		UE_LOG(LogTemp, Warning, TEXT("Login %d %s"), LoginData->clientsocket_id(), *Message);
 	}

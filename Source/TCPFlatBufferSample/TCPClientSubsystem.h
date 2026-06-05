@@ -38,9 +38,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "TCP")
 	FOnTCPDisconnected OnTCPDisconnected;
 
-
 	void SendLogin(const FString& UserID, const FString& Password);
 
+	virtual void Deinitialize() override;
 private:
 	TArray<uint8> RecvBuffer;
 
@@ -48,6 +48,7 @@ private:
 
 	bool SendAll(const uint8* Body, uint32 BodyLength);
 
+	//언리얼 자체에서 제공해주는 자체 소켓.
 	FSocket* ServerSocket = nullptr;
 
 	void DispatchPacket();
