@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -38,6 +38,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "TCP")
 	FOnTCPDisconnected OnTCPDisconnected;
 
+	UFUNCTION(BlueprintCallable, Category = "TCP")
 	void SendLogin(const FString& UserID, const FString& Password);
 
 	virtual void Deinitialize() override;
@@ -48,7 +49,7 @@ private:
 
 	bool SendAll(const uint8* Body, uint32 BodyLength);
 
-	//¾ğ¸®¾ó ÀÚÃ¼¿¡¼­ Á¦°øÇØÁÖ´Â ÀÚÃ¼ ¼ÒÄÏ.
+	//ì–¸ë¦¬ì–¼ ìì²´ì—ì„œ ì œê³µí•´ì£¼ëŠ” ìì²´ ì†Œì¼“.
 	FSocket* ServerSocket = nullptr;
 
 	void DispatchPacket();
